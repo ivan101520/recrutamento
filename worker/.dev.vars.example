@@ -1,0 +1,6 @@
+# Copie para .dev.vars (não vai para o git) para rodar o Worker localmente com "npx wrangler dev".
+GOOGLE_CLIENT_EMAIL="worker-vagas@seu-projeto.iam.gserviceaccount.com"
+GOOGLE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+SHEET_ID="id-da-planilha"
+# segredo que assina o token de login: texto longo e aleatório (ex.: saída de "node -e "console.log(crypto.randomUUID()+crypto.randomUUID())"")
+JWT_SECRET="troque-por-um-texto-longo-e-aleatorio"

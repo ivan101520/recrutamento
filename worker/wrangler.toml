@@ -1,0 +1,13 @@
+name = "vagas-api"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+
+[vars]
+# endereços que podem chamar a API, separados por vírgula (inclua o endereço onde o app for publicado)
+ALLOWED_ORIGINS = "http://localhost:5173"
+
+# limita tentativas de login: 6 por minuto por IP (plano gratuito)
+[[ratelimits]]
+name = "LOGIN_LIMITER"
+namespace_id = "1001"
+simple = { limit = 6, period = 60 }

@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "vagas",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["vite", "--port", "5173", "--strictPort", "--open", "false"],
+      "port": 5173
+    },
+    {
+      "name": "vagas-api",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["wrangler", "dev", "--cwd", "worker", "--port", "8787"],
+      "port": 8787
+    }
+  ]
+}
