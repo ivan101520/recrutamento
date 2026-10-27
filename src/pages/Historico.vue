@@ -105,9 +105,9 @@ const mesPassado = (() => {
 const ehAberta = v => v.status === 'aberta';
 const ehAntiga = v => ehAberta(v) && !!v.iniciada && v.iniciada.slice(0, 7) < mesAtual;
 
-// usa todas as vagas, não só as do período: é um alerta do estado atual
+// usa todas as vagas, não só as do período: é um alerta do estado atual (mas segue a busca e as listas)
 const atencao = computed(() => {
-  const antigas = vagas.value.filter(ehAntiga);
+  const antigas = vagas.value.filter(v => ehAntiga(v) && passaListas(v, termo.value));
   const doMesPassado = antigas.filter(v => v.iniciada.slice(0, 7) === mesPassado).length;
   return { total: antigas.length, doMesPassado, anteriores: antigas.length - doMesPassado };
 });
@@ -166,6 +166,10 @@ function passa(v, q, ignorar) {
   if (filtro.value === 'canceladas' && v.status !== 'cancelada') return false;
   if (filtro.value === 'fora' && (!ehAberta(v) || !foraSla(v))) return false;
   if (filtro.value === 'antigas' && !ehAntiga(v)) return false;
+  return passaListas(v, q, ignorar);
+}
+// busca e listas (Situação, Motivo, Estado), sem o card do topo: é o que os KPIs seguem
+function passaListas(v, q, ignorar) {
   if (FILTROS_LISTA.some(({ campo }) => campo !== ignorar && escolhidos[campo] && normalizar(v[campo]) !== normalizar(escolhidos[campo]))) return false;
   if (!q) return true;
   return [v.codigo, v.cargo, v.filial, v.setor, v.recrutadora, v.solicitante]
@@ -173,6 +177,7 @@ function passa(v, q, ignorar) {
 }
 const termo = computed(() => normalizar(busca.value.trim()));
 const lista = computed(() => doPeriodo.value.filter(v => passa(v, termo.value)));
+const paraKpis = computed(() => doPeriodo.value.filter(v => passaListas(v, termo.value)));
 
 // filtros dinâmicos: cada lista mostra só os valores das vagas que passam pelos OUTROS filtros
 // (o valor já escolhido fica na lista, para não sumir enquanto se digita na busca)
@@ -265,12 +270,12 @@ onUnmounted(() => {
 });
 
 const kpi = computed(() => {
-  const abertas = doPeriodo.value.filter(ehAberta);
+  const abertas = paraKpis.value.filter(ehAberta);
   return {
     abertas: abertas.length,
     posicoes: abertas.reduce((s, v) => s + n(v.posicoes), 0),
     foraSla: abertas.filter(foraSla).length,
-    fechadas: doPeriodo.value.filter(v => v.status === 'fechada').length,
+    fechadas: paraKpis.value.filter(v => v.status === 'fechada').length,
     antigas: atencao.value.total,
   };
 });
