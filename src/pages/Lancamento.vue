@@ -1,7 +1,7 @@
 <script setup>
 import { computed, ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { form, criarVaga, buscarDuplicadas, vazio, avisar, SECOES, erroDatas, paraSalvar, rotuloStatus } from '../store.js';
+import { form, nomeVaga, criarVaga, buscarDuplicadas, vazio, avisar, SECOES, erroDatas, paraSalvar, rotuloStatus } from '../store.js';
 import { n, brl, data, calc } from '../utils.js';
 import Modal from '../components/Modal.vue';
 import SecaoCampos from '../components/SecaoCampos.vue';
@@ -50,7 +50,7 @@ async function salvar(confirmouDuplicada = false) {
     }
     const registro = { ...paraSalvar(form), id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) };
     if (!(await criarVaga(registro))) return;
-    avisar(`Vaga ${registro.codigo || registro.cargo} lançada.`);
+    avisar(`Vaga ${nomeVaga(registro)} lançada.`);
     novo();
     router.push('/historico');
   } catch (e) {

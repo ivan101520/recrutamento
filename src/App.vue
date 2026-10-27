@@ -1,12 +1,24 @@
 <script setup>
 import { ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { toast, carregando, carregar, avisar } from './store.js';
+import { toast, carregando, carregar, avisar, vagas } from './store.js';
 import { PAGINAS } from './router.js';
 import { sessao, sair, ehAdmin } from './auth.js';
 import { isDark, alternarTema } from './tema.js';
+import TelaCarregando from './components/TelaCarregando.vue';
 
 const route = useRoute();
+
+// primeira carga (ao abrir ou logo após o login): tela na hora, até os dados aparecerem;
+// no Recarregar só mostra se passar de 250 ms, para não piscar em respostas rápidas
+const mostrarCarregando = ref(false);
+let timerCarregando;
+watch(carregando, on => {
+  clearTimeout(timerCarregando);
+  if (!on) mostrarCarregando.value = false;
+  else if (!vagas.value.length) mostrarCarregando.value = true;
+  else timerCarregando = setTimeout(() => { mostrarCarregando.value = true; }, 250);
+}, { immediate: true });
 const router = useRouter();
 
 // sessão encerrada (botão Sair, expirou ou a API recusou o token): volta para o login
@@ -95,4 +107,6 @@ function alternarSidebar() {
 
     <div v-if="toast" class="toast" role="status">{{ toast }}</div>
   </div>
+  <!-- fora do v-if para cobrir também a tela de login enquanto os dados carregam -->
+  <TelaCarregando :show="mostrarCarregando" />
 </template>

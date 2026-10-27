@@ -13,9 +13,29 @@
     // aplica o tema antes de desenhar a página, para não piscar claro ao abrir no modo noturno
     try { document.documentElement.classList.toggle('dark', localStorage.getItem('gg-theme') === 'dark'); } catch (e) {}
   </script>
+  <style>
+    /* tela de abertura até o app subir (igual à do Gente & Gestão) */
+    #app-loading { position: fixed; inset: 0; z-index: 9999; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2.5rem; padding: 3rem; background: #0e1a24; font-family: "IBM Plex Sans", system-ui, sans-serif; }
+    #app-loading .gg-boot-logo { width: 100%; max-width: 15rem; object-fit: contain; }
+    #app-loading .gg-col { display: flex; flex-direction: column; align-items: center; gap: .75rem; }
+    #app-loading p { margin: 0; font-size: .8125rem; font-weight: 500; color: #8b9cad; }
+    #app-loading .gg-rule { position: relative; width: 12rem; height: 1rem; }
+    #app-loading .gg-rule::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: rgba(255,255,255,.18); }
+    #app-loading .gg-rule::after { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: .5rem; transform: translateY(-50%); background: repeating-linear-gradient(90deg, rgba(255,255,255,.28) 0 1px, transparent 1px calc(100% / 8)); }
+    #app-loading .gg-dot { position: absolute; top: 50%; left: 0; width: .625rem; height: .625rem; margin-top: -.3125rem; border-radius: 9999px; background: #E8AF3E; animation: gg-boot-run 1.6s cubic-bezier(.65,0,.35,1) infinite alternate; }
+    @keyframes gg-boot-run { to { transform: translateX(11.375rem); } }
+    @media (prefers-reduced-motion: reduce) { #app-loading .gg-dot { animation: none; transform: translateX(5.6875rem); } }
+  </style>
 </head>
 <body>
   <div id="app"></div>
+  <div id="app-loading" role="status" aria-live="polite">
+    <img class="gg-boot-logo" src="./logo.png" alt="Grupo Modena &amp; Araújo">
+    <div class="gg-col">
+      <div class="gg-rule" aria-hidden="true"><span class="gg-dot"></span></div>
+      <p>Carregando informações...</p>
+    </div>
+  </div>
   <script type="module" src="/src/main.js"></script>
 </body>
 </html>

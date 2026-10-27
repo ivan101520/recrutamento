@@ -21,8 +21,14 @@ let tokenCache = { valor: '', expira: 0 };
 const b64url = dados => btoa(typeof dados === 'string' ? dados : String.fromCharCode(...new Uint8Array(dados)))
   .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
-async function tokenGoogle(env) {
-  if (tokenCache.expira > Date.now() + 60_000) return tokenCache.valor;
+// pedidos que chegam juntos com o Worker recém-iniciado esperam o mesmo token, em vez de cada um pedir o seu
+let tokenPedido = null;
+function tokenGoogle(env) {
+  if (tokenCache.expira > Date.now() + 60_000) return Promise.resolve(tokenCache.valor);
+  return (tokenPedido ??= novoTokenGoogle(env).finally(() => { tokenPedido = null; }));
+}
+
+async function novoTokenGoogle(env) {
   const agora = Math.floor(Date.now() / 1000);
   const cabecalho = b64url(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
   const corpo = b64url(JSON.stringify({
@@ -173,10 +179,15 @@ const estaAtivo = u => ['true', 'verdadeiro', 'sim', '1', 'x'].includes(String(u
 let cacheUsuarios = { lista: [], cab: [], ate: 0 };
 async function usuarios(env, fresco = false) {
   if (!fresco && cacheUsuarios.ate > Date.now()) return cacheUsuarios.lista;
-  const { values = [] } = await sheets(env, `/values/${enc(ABA_USUARIOS)}`).catch(e => {
-    if (/Unable to parse range/i.test(e.message)) throw erro(500, `Crie a aba "${ABA_USUARIOS}" na planilha, com as colunas: ${COLUNAS_USUARIOS.join(', ')}.`);
-    throw e;
-  });
+  const { values = [] } = await sheets(env, `/values/${enc(ABA_USUARIOS)}`).catch(semAbaUsuarios);
+  return guardarUsuarios(values);
+}
+function semAbaUsuarios(e) {
+  if (/Unable to parse range/i.test(e.message) && e.message.includes(ABA_USUARIOS)) throw erro(500, `Crie a aba "${ABA_USUARIOS}" na planilha, com as colunas: ${COLUNAS_USUARIOS.join(', ')}.`);
+  throw e;
+}
+// também usado pelo /dados, que lê a aba Usuarios junto com as vagas
+function guardarUsuarios(values = []) {
   const [cab = [], ...linhas] = values;
   const lista = linhas
     // _linha: número da linha na planilha, usado para editar e excluir
@@ -306,27 +317,31 @@ async function entrar(req, env) {
 }
 
 // toda rota de dados passa por aqui: token válido, usuário ainda ativo e com a mesma senha
-async function autenticar(req, env) {
+async function lerSessao(req, env) {
   const cab = req.headers.get('Authorization') || '';
   const dados = cab.startsWith('Bearer ') ? await lerToken(cab.slice(7), env.JWT_SECRET) : null;
   if (!dados) throw erro(401, 'Não autenticado.');
+  return dados;
+}
+async function autenticar(dados, env) {
   const u = (await usuarios(env)).find(x => x.id === String(dados.sub));
   if (!u || !estaAtivo(u) || versaoSenha(u.senha_hash) !== dados.pv) throw erro(401, 'Não autenticado.');
   return u;
 }
 
-/* ---------- filtro de período (mesma regra do Histórico: compara pela data de início) ---------- */
+/* ---------- filtro de período (Histórico: fechada conta pela data de fechamento, as demais pelo início) ---------- */
 const FORMATO_PERIODO = { mes: /^\d{4}-\d{2}$/, data: /^\d{4}-\d{2}-\d{2}$/ };
 export function filtroPeriodo(modo, de, ate) {
   const formato = FORMATO_PERIODO[modo];
   if (!formato) return () => true; // sem período: todas
   de = formato.test(de || '') ? de : '';
   ate = formato.test(ate || '') ? ate : '';
-  return v => {
-    const ini = String(v.iniciada ?? '');
-    const d = modo === 'mes' ? ini.slice(0, 7) : ini;
-    return (!de || d >= de) && (!ate || d <= ate);
+  const dentro = data => {
+    const d = modo === 'mes' ? String(data ?? '').slice(0, 7) : String(data ?? '');
+    return !!d && (!de || d >= de) && (!ate || d <= ate);
   };
+  // envia se o início OU o fechamento cair no período: a tela decide qual data vale (fechada conta pelo fechamento)
+  return v => dentro(v.iniciada) || dentro(v.fechada) || (!v.iniciada && !de && !ate);
 }
 
 // mesma regra de status do app (utils.js, migrar): sem status, a Situação ou a data de fechamento decidem
@@ -345,7 +360,16 @@ async function rotear(req, env) {
   if (req.method === 'GET' && !recurso) return { ok: true, api: 'vagas', rotas: ['POST /login', 'GET /usuarios', 'POST /usuarios', 'PATCH /usuarios/:id', 'DELETE /usuarios/:id', 'GET /dados?modo=&de=&ate=', 'GET /duplicadas?codigo=&id=', 'POST /vagas', 'PUT /vagas/:id', 'DELETE /vagas/:id', 'PUT /opcoes'] };
   if (!env.JWT_SECRET) throw erro(500, 'Servidor não configurado (JWT_SECRET).');
   if (req.method === 'POST' && recurso === 'login') return entrar(req, env);
-  const eu = await autenticar(req, env);
+  const sessao = await lerSessao(req, env); // assinatura do token antes de qualquer leitura da planilha
+
+  // /dados lê Vagas, Opcoes e Usuarios num só pedido ao Google (uma ida e volta a menos que ler os usuários antes)
+  let lido;
+  if (req.method === 'GET' && recurso === 'dados') {
+    lido = (await sheets(env, `/values:batchGet?ranges=${enc(ABA_VAGAS)}&ranges=${enc(ABA_OPCOES)}&ranges=${enc(ABA_USUARIOS)}&valueRenderOption=UNFORMATTED_VALUE&majorDimension=ROWS`)
+      .catch(semAbaUsuarios)).valueRanges;
+    guardarUsuarios(lido[2].values);
+  }
+  const eu = await autenticar(sessao, env);
 
   if (recurso === 'usuarios') {
     // perfil lido da planilha a cada pedido: rebaixar alguém vale sem precisar sair e entrar
@@ -359,8 +383,7 @@ async function rotear(req, env) {
   // ?modo=mes|data&de=&ate=: devolve só as vagas desse período (pela data de início), como o filtro do Histórico.
   // O Google não filtra por data: a aba inteira é lida do mesmo jeito; o que diminui é a resposta para o navegador.
   if (req.method === 'GET' && recurso === 'dados') {
-    const { valueRanges } = await sheets(env,
-      `/values:batchGet?ranges=${enc(ABA_VAGAS)}&ranges=${enc(ABA_OPCOES)}&valueRenderOption=UNFORMATTED_VALUE&majorDimension=ROWS`);
+    const valueRanges = lido;
     const [cabecalho = [], ...linhas] = valueRanges[0].values || [];
     const todas = linhas.filter(l => l[0]).map(l => paraVaga(cabecalho, l));
     const [cabOpcoes = [], ...linhasOpcoes] = valueRanges[1].values || [];

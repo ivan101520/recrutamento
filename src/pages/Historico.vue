@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
-import { vagas, totalVagas, periodo, PERIODO_PADRAO, atualizarVaga, excluirVaga, atualizarVagas, buscarDuplicadas, vazio, avisar, CAMPOS, SECOES, erroDatas, paraSalvar, rotuloStatus } from '../store.js';
+import { vagas, nomeVaga, totalVagas, periodo, PERIODO_PADRAO, atualizarVaga, excluirVaga, atualizarVagas, buscarDuplicadas, vazio, avisar, CAMPOS, SECOES, erroDatas, paraSalvar, rotuloStatus } from '../store.js';
 import { n, hoje, brl, data, calc, diasAbertos, foraSla, normalizar } from '../utils.js';
 import Modal from '../components/Modal.vue';
 import PeriodoFiltro from '../components/PeriodoFiltro.vue';
@@ -12,10 +12,12 @@ const COLUNAS = {
   local: ['Filial / Setor', 'Recrutadora'],
   etapas: ['Datas', 'Status'],
   motivo: ['Motivo'],
-  remuneracao: ['Mensal'],
+  remuneracao: ['Remuneração', 'Periculosidade', 'Premiação', 'Assiduidade', 'Alimentação', 'Adicional', 'Total'],
   obs: ['Observações'],
 };
-const NUMERICAS = new Set(['Posições', 'Mensal']);
+// campos da vaga na ordem das colunas de Remuneração (a última, Total, é calculada)
+const VALORES = ['remuneracao', 'periculosidade', 'premiacao', 'assiduidade', 'alimentacao', 'adicional'];
+const NUMERICAS = new Set(['Posições', 'Total']);
 
 /* ---------- edição por seção ---------- */
 const editando = ref(null); // { id, secao, titulo, cargo, codigo }
@@ -54,7 +56,7 @@ async function salvarSecao() {
   }
   const salvo = paraSalvar(rascunho);
   if (!(await atualizarVaga(salvo))) return;
-  avisar(`Vaga ${salvo.codigo || salvo.cargo} atualizada.`);
+  avisar(`Vaga ${nomeVaga(salvo)} atualizada.`);
   editando.value = null;
 }
 
@@ -84,10 +86,11 @@ const filtro = ref('todas');
 const periodoEhPadrao = computed(() =>
   ['modo', 'de', 'ate'].every(k => periodo.value[k] === PERIODO_PADRAO[k]));
 
-// compara pela data de início; no modo mês usa só AAAA-MM
+// vaga fechada conta pela data de fechamento; as demais, pela data de início. No modo mês usa só AAAA-MM
+const dataDoPeriodo = v => (v.status === 'fechada' && v.fechada) || v.iniciada || '';
 function noPeriodo(v) {
   const { modo, de, ate } = periodo.value;
-  const d = modo === 'mes' ? (v.iniciada || '').slice(0, 7) : (v.iniciada || '');
+  const d = modo === 'mes' ? dataDoPeriodo(v).slice(0, 7) : dataDoPeriodo(v);
   return (!de || d >= de) && (!ate || d <= ate);
 }
 const doPeriodo = computed(() => vagas.value.filter(noPeriodo));
@@ -139,32 +142,51 @@ watch(filtro, f => {
   if (KPIS.find(k => k.key === kpiAtivo.value)?.filtro !== f) kpiAtivo.value = KPIS.find(k => k.filtro === f)?.key ?? null;
 });
 
-const temFiltro = computed(() => filtro.value !== 'todas' || busca.value || !periodoEhPadrao.value);
+// filtros de lista: campo da vaga -> texto da opção "todas"
+const FILTROS_LISTA = [
+  { campo: 'situacao', rotulo: 'situação', todas: 'Todas as situações' },
+  { campo: 'motivo', rotulo: 'motivo', todas: 'Todos os motivos' },
+  { campo: 'estado', rotulo: 'estado', todas: 'Todos os estados' },
+];
+const escolhidos = reactive({ situacao: '', motivo: '', estado: '' });
+
+const temFiltro = computed(() => filtro.value !== 'todas' || busca.value || Object.values(escolhidos).some(Boolean) || !periodoEhPadrao.value);
 function limparFiltros() {
   busca.value = '';
+  Object.keys(escolhidos).forEach(k => { escolhidos[k] = ''; });
   filtro.value = 'todas';
   periodo.value = { ...PERIODO_PADRAO };
 }
 
-const lista = computed(() => {
-  const q = normalizar(busca.value.trim());
-  return doPeriodo.value.filter(v => {
-    if (filtro.value === 'abertas' && !ehAberta(v)) return false;
-    if (filtro.value === 'fechadas' && v.status !== 'fechada') return false;
-    if (filtro.value === 'congeladas' && v.status !== 'congelada') return false;
-    if (filtro.value === 'canceladas' && v.status !== 'cancelada') return false;
-    if (filtro.value === 'fora' && (!ehAberta(v) || !foraSla(v))) return false;
-    if (filtro.value === 'antigas' && !ehAntiga(v)) return false;
-    if (!q) return true;
-    return [v.codigo, v.cargo, v.filial, v.setor, v.recrutadora, v.solicitante]
-      .some(s => normalizar(s).includes(q));
-  });
-});
+// todos os filtros da tabela; "ignorar" pula um filtro de lista (para montar as opções dele mesmo)
+function passa(v, q, ignorar) {
+  if (filtro.value === 'abertas' && !ehAberta(v)) return false;
+  if (filtro.value === 'fechadas' && v.status !== 'fechada') return false;
+  if (filtro.value === 'congeladas' && v.status !== 'congelada') return false;
+  if (filtro.value === 'canceladas' && v.status !== 'cancelada') return false;
+  if (filtro.value === 'fora' && (!ehAberta(v) || !foraSla(v))) return false;
+  if (filtro.value === 'antigas' && !ehAntiga(v)) return false;
+  if (FILTROS_LISTA.some(({ campo }) => campo !== ignorar && escolhidos[campo] && normalizar(v[campo]) !== normalizar(escolhidos[campo]))) return false;
+  if (!q) return true;
+  return [v.codigo, v.cargo, v.filial, v.setor, v.recrutadora, v.solicitante]
+    .some(s => normalizar(s).includes(q));
+}
+const termo = computed(() => normalizar(busca.value.trim()));
+const lista = computed(() => doPeriodo.value.filter(v => passa(v, termo.value)));
+
+// filtros dinâmicos: cada lista mostra só os valores das vagas que passam pelos OUTROS filtros
+// (o valor já escolhido fica na lista, para não sumir enquanto se digita na busca)
+const opcoesFiltro = computed(() => Object.fromEntries(FILTROS_LISTA.map(({ campo }) => {
+  const valores = new Set(doPeriodo.value.filter(v => passa(v, termo.value, campo)).map(v => v[campo]).filter(Boolean));
+  if (escolhidos[campo]) valores.add(escolhidos[campo]);
+  return [campo, [...valores].sort((a, b) => a.localeCompare(b, 'pt-BR'))];
+})));
 
 /* ---------- virtualização: só as linhas visíveis (mais uma margem) ficam na página ---------- */
 const TOTAL_COLUNAS = Object.values(COLUNAS).flat().length + 1; // + coluna de ações
 // larguras fixas (px), na ordem das colunas: com só parte das linhas desenhada, a largura automática "pularia" ao rolar
-const LARGURAS = [180, 70, 85, 120, 125, 100, 105, 150, 125, 120, 48];
+const LARGURAS = [180, 70, 85, 120, 125, 100, 105, 150, 100, 105, 95, 95, 100, 90, 120, 120, 48];
+const LARGURA_TABELA = LARGURAS.reduce((s, l) => s + l, 0);
 const MARGEM = 800; // px desenhados acima e abaixo da área visível, para a rolagem não mostrar buracos
 const wrapEl = ref(null);
 const tbodyEl = ref(null);
@@ -310,16 +332,11 @@ function exportar() {
       <div class="toolbar">
         <input v-model="busca" type="search" placeholder="Buscar código, cargo, filial, recrutadora…" aria-label="Buscar">
         <PeriodoFiltro v-model="periodo" />
-        <select v-model="filtro" aria-label="Filtrar por status">
-          <option value="todas">Todas</option>
-          <option value="abertas">Abertas</option>
-          <option value="fora">Fora do SLA</option>
-          <option value="fechadas">Fechadas</option>
-          <option value="congeladas">Congeladas</option>
-          <option value="canceladas">Canceladas</option>
-          <option value="antigas">Abertas de meses anteriores</option>
+        <select v-for="f in FILTROS_LISTA" :key="f.campo" v-model="escolhidos[f.campo]" :aria-label="'Filtrar por ' + f.rotulo">
+          <option value="">{{ f.todas }}</option>
+          <option v-for="o in opcoesFiltro[f.campo]" :key="o" :value="o">{{ o }}</option>
         </select>
-        <button v-if="temFiltro" type="button" class="link" title="Volta para os últimos 3 meses, sem busca e com todos os status" @click="limparFiltros">Limpar filtros</button>
+        <button v-if="temFiltro" type="button" class="link" title="Volta para os últimos 3 meses, sem busca, sem situação, motivo ou estado e sem filtro dos indicadores" @click="limparFiltros">Limpar filtros</button>
         <button class="ghost push" :disabled="!lista.length" @click="exportar">Exportar CSV</button>
       </div>
 
@@ -330,7 +347,7 @@ function exportar() {
       <p v-else-if="!lista.length" class="empty">Nenhuma vaga encontrada com esses filtros.</p>
 
       <div v-else ref="wrapEl" class="table-wrap" @scroll.passive="rolou">
-        <table class="tabela-secoes">
+        <table class="tabela-secoes" :style="{ minWidth: LARGURA_TABELA + 'px' }">
           <colgroup><col v-for="(l, i) in LARGURAS" :key="i" :style="{ width: l + 'px' }"></colgroup>
           <thead>
             <tr class="grupo">
@@ -378,7 +395,8 @@ function exportar() {
                 <small v-if="v.novaContratacao">Nova: {{ v.novaContratacao }}</small>
               </td>
               <!-- Remuneração -->
-              <td v-bind="cel(v, SEC.remuneracao, true)" class="num">{{ brl(calc(v).mensal) }}<small>Anual {{ brl(calc(v).anual) }}</small></td>
+              <td v-for="(campo, i) in VALORES" :key="campo" v-bind="cel(v, SEC.remuneracao, i === 0)" class="num" :class="{ zero: !n(v[campo]) }">{{ n(v[campo]) ? brl(v[campo]) : '—' }}</td>
+              <td v-bind="cel(v, SEC.remuneracao)" class="num"><strong>{{ brl(calc(v).mensal) }}</strong><small>Anual {{ brl(calc(v).anual) }}</small></td>
               <!-- Observações -->
               <td v-bind="cel(v, SEC.obs, true)" class="obs">{{ v.observacoes || '—' }}</td>
               <td class="row-actions ini">

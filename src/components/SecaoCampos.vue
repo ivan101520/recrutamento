@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue';
 import CampoBusca from './CampoBusca.vue';
+import CampoMoeda from './CampoMoeda.vue';
 import { opcoes, recrutadoras, CONTRATOS, STATUS, opts, ehSubstituicao, duplicadasDe } from '../store.js';
 import { brl, calc } from '../utils.js';
 
@@ -66,7 +67,7 @@ const MOEDAS = [
       <label>Situação
         <select v-model="v.situacao"><option value="">—</option><option v-for="o in opts('situacoes', v.situacao)" :key="o">{{ o }}</option></select>
       </label>
-      <label>Admissão<input v-model="v.admissao" type="date" :min="v.iniciada"></label>
+      <label v-if="v.status === 'fechada'">Admissão<input v-model="v.admissao" type="date" :min="v.iniciada"></label>
     </div>
   </template>
 
@@ -83,7 +84,7 @@ const MOEDAS = [
   <template v-else-if="secao === 'remuneracao'">
     <div class="grid">
       <label v-for="c in MOEDAS" :key="c.campo">{{ c.rotulo }}
-        <span class="campo-moeda"><span aria-hidden="true">R$</span><input v-model.number="v[c.campo]" type="number" min="0" step="0.01"></span>
+        <span class="campo-moeda"><span aria-hidden="true">R$</span><CampoMoeda v-model="v[c.campo]" /></span>
       </label>
     </div>
     <div class="totais-secao">

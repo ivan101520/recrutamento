@@ -346,7 +346,8 @@ thead .grupo th {
 @media (min-width: 768px) {
   .wrap.historico { max-width: none; padding-left: 24px; padding-right: 24px; }
 }
-.tabela-secoes { min-width: 1228px; font-size: 13px; table-layout: fixed; }
+.tabela-secoes { font-size: 13px; table-layout: fixed; } /* largura mínima vem das colunas (Historico.vue) */
+.tabela-secoes td.zero { color: var(--faint); }
 .tabela-secoes td { overflow-wrap: anywhere; }
 .tabela-secoes td strong { white-space: normal; }
 .tabela-secoes .cargo-cel { min-width: 140px; }
@@ -632,3 +633,30 @@ html.dark .usuario-voce { color: var(--accent-light); }
 
 /* títulos da tabela do Histórico centralizados (grupo e colunas, inclusive as numéricas) */
 .tabela-secoes thead th, .tabela-secoes thead th.num { text-align: center; }
+
+/* Tela de carregamento (igual à do Gente & Gestão) */
+.tela-carregando {
+  position: fixed; inset: 0; z-index: 120;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  background: rgb(255 255 255 / .92); backdrop-filter: blur(12px);
+  --gg-rule-line: #d4d4d8; --gg-rule-tick: #a1a1aa;
+}
+html.dark .tela-carregando { background: rgb(9 9 11 / .92); --gg-rule-line: rgb(255 255 255 / .18); --gg-rule-tick: rgb(255 255 255 / .28); }
+.carregando-col { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; gap: .75rem; }
+.carregando-col p { margin: 0; font-size: 13px; font-weight: 500; color: var(--muted); }
+.carregando-fade-enter-active, .carregando-fade-leave-active { transition: opacity .2s ease; }
+.carregando-fade-enter-from, .carregando-fade-leave-to { opacity: 0; }
+.gg-rule { position: relative; width: 12rem; height: 1rem; }
+.gg-rule::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: var(--gg-rule-line); }
+.gg-rule::after {
+  content: ""; position: absolute; left: 0; right: 0; top: 50%; height: .5rem; transform: translateY(-50%);
+  background: repeating-linear-gradient(90deg, var(--gg-rule-tick) 0 1px, transparent 1px calc(100% / 8));
+}
+.gg-dot {
+  position: absolute; top: 50%; left: 0; z-index: 1; width: .625rem; height: .625rem; margin-top: -.3125rem;
+  border-radius: 9999px; background: var(--accent);
+  animation: gg-rule-run 1.6s cubic-bezier(.65, 0, .35, 1) infinite alternate; will-change: transform;
+}
+/* 11.375rem = régua (12rem) menos o ponto (.625rem) */
+@keyframes gg-rule-run { to { transform: translateX(11.375rem); } }
+@media (prefers-reduced-motion: reduce) { .gg-dot { animation: none; transform: translateX(5.6875rem); } }

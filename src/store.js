@@ -228,6 +228,8 @@ export const SECOES = [
 
 // depende do texto da opção "Substituição" em Ajustes
 export const ehSubstituicao = v => normalizar(v.motivo) === 'substituicao';
+// nome para avisos: cargo + código só quando o código tem número (a planilha usa "S/N" nas vagas sem código)
+export const nomeVaga = v => /\d/.test(v.codigo || '') ? `${v.cargo} (${v.codigo})` : v.cargo;
 
 export const duplicadasDe = v =>
   v.codigo ? vagas.value.filter(x => x.codigo === v.codigo && x.id !== v.id) : [];
@@ -238,11 +240,12 @@ export function erroDatas(v) {
   return v.fechada < v.iniciada ? 'A data de fechamento não pode ser anterior à data de início.' : '';
 }
 
-// prepara a vaga para salvar: substituição só com motivo substituição; data de fechamento só com status fechada
+// prepara a vaga para salvar: substituição só com motivo substituição; fechamento e admissão só com status fechada
 export const paraSalvar = v => ({
   ...v,
   substituicao: ehSubstituicao(v) ? v.substituicao : '',
   fechada: v.status === 'fechada' ? v.fechada : '',
+  admissao: v.status === 'fechada' ? v.admissao : '',
   atualizadoEm: new Date().toISOString(),
 });
 

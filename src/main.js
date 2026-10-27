@@ -40,3 +40,4 @@ document.addEventListener('keydown', e => {
 });
 
 createApp(App).use(router).mount('#app');
+document.getElementById('app-loading')?.remove();
