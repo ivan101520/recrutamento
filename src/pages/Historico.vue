@@ -1,7 +1,7 @@
 <script setup>
-import { computed, onUnmounted, reactive, ref, watch } from 'vue';
-import { vagas, atualizarVaga, excluirVaga, vazio, avisar, CAMPOS, SECOES, duplicadasDe, erroDatas, paraSalvar, rotuloStatus } from '../store.js';
-import { n, hoje, brl, data, calc, diasAbertos, foraSla } from '../utils.js';
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
+import { vagas, totalVagas, periodo, PERIODO_PADRAO, atualizarVaga, excluirVaga, atualizarVagas, buscarDuplicadas, vazio, avisar, CAMPOS, SECOES, erroDatas, paraSalvar, rotuloStatus } from '../store.js';
+import { n, hoje, brl, data, calc, diasAbertos, foraSla, normalizar } from '../utils.js';
 import Modal from '../components/Modal.vue';
 import PeriodoFiltro from '../components/PeriodoFiltro.vue';
 import SecaoCampos from '../components/SecaoCampos.vue';
@@ -41,10 +41,16 @@ async function salvarSecao() {
     erroSecao.value = 'Preencha os campos obrigatórios desta seção.';
     return;
   }
-  if (editando.value.secao === 'vaga' && duplicadasDe(rascunho).length && !confirmouDuplicada.value) {
-    confirmouDuplicada.value = true;
-    erroSecao.value = `Já existe outra vaga com o código ${rascunho.codigo}. Clique em "Salvar mesmo assim" para confirmar.`;
-    return;
+  // só pergunta quando o código mudou: vagas antigas repetem "S/N" e travariam toda edição da seção
+  if (editando.value.secao === 'vaga' && rascunho.codigo !== editando.value.codigo && !confirmouDuplicada.value) {
+    let dup;
+    try { dup = await buscarDuplicadas(rascunho); }
+    catch (e) { erroSecao.value = `Não foi possível conferir o código. ${e.message}`; return; }
+    if (dup.length) {
+      confirmouDuplicada.value = true;
+      erroSecao.value = `Já existe outra vaga com o código ${rascunho.codigo}. Clique em "Salvar mesmo assim" para confirmar.`;
+      return;
+    }
   }
   const salvo = paraSalvar(rascunho);
   if (!(await atualizarVaga(salvo))) return;
@@ -74,15 +80,7 @@ const SEC = Object.fromEntries(SECOES.map(s => [s.key, s]));
 const busca = ref('');
 const filtro = ref('todas');
 
-// padrão: mês atual e os 2 anteriores (dia 1 evita pular mês em datas como 31/05 - 2 meses)
-function ultimos3Meses() {
-  const agora = new Date();
-  const inicio = new Date(agora.getFullYear(), agora.getMonth() - 2, 1);
-  const chave = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-  return { modo: 'mes', de: chave(inicio), ate: chave(agora) };
-}
-const PERIODO_PADRAO = ultimos3Meses();
-const periodo = ref({ ...PERIODO_PADRAO });
+// o período fica no store.js: a API só devolve as vagas dele (trocar o período busca de novo)
 const periodoEhPadrao = computed(() =>
   ['modo', 'de', 'ate'].every(k => periodo.value[k] === PERIODO_PADRAO[k]));
 
@@ -149,7 +147,7 @@ function limparFiltros() {
 }
 
 const lista = computed(() => {
-  const q = busca.value.trim().toLowerCase();
+  const q = normalizar(busca.value.trim());
   return doPeriodo.value.filter(v => {
     if (filtro.value === 'abertas' && !ehAberta(v)) return false;
     if (filtro.value === 'fechadas' && v.status !== 'fechada') return false;
@@ -159,7 +157,7 @@ const lista = computed(() => {
     if (filtro.value === 'antigas' && !ehAntiga(v)) return false;
     if (!q) return true;
     return [v.codigo, v.cargo, v.filial, v.setor, v.recrutadora, v.solicitante]
-      .some(s => (s || '').toLowerCase().includes(q));
+      .some(s => normalizar(s).includes(q));
   });
 });
 
@@ -223,6 +221,27 @@ watch(wrapEl, el => {
 });
 onUnmounted(() => { observador?.disconnect(); cancelAnimationFrame(raf); });
 
+/* ---------- atualização automática: busca as vagas a cada 30 s, só com a aba do navegador visível ---------- */
+// não baixar o intervalo sem rever a cota do Google Sheets (60 leituras/min para a conta de serviço inteira)
+const INTERVALO_MS = 30_000;
+let relogio = 0;
+function ligarRelogio() {
+  clearInterval(relogio);
+  if (document.visibilityState === 'visible') relogio = setInterval(atualizarVagas, INTERVALO_MS);
+}
+function mudouVisibilidade() {
+  if (document.visibilityState === 'visible') atualizarVagas(); // voltou para a aba: atualiza na hora
+  ligarRelogio();
+}
+onMounted(() => {
+  ligarRelogio();
+  document.addEventListener('visibilitychange', mudouVisibilidade);
+});
+onUnmounted(() => {
+  clearInterval(relogio);
+  document.removeEventListener('visibilitychange', mudouVisibilidade);
+});
+
 const kpi = computed(() => {
   const abertas = doPeriodo.value.filter(ehAberta);
   return {
@@ -267,7 +286,7 @@ function exportar() {
   <main class="wrap historico">
     <header class="page-head">
       <h1>Histórico de lançamentos</h1>
-      <span class="badge">{{ vagas.length === 1 ? '1 vaga' : `${vagas.length} vagas` }}</span>
+      <span class="badge">{{ totalVagas === 1 ? '1 vaga' : `${totalVagas} vagas` }}</span>
     </header>
 
     <section class="kpis" aria-label="Indicadores. Clique para filtrar a tabela">
@@ -304,7 +323,7 @@ function exportar() {
         <button class="ghost push" :disabled="!lista.length" @click="exportar">Exportar CSV</button>
       </div>
 
-      <div v-if="!vagas.length" class="empty">
+      <div v-if="!totalVagas" class="empty">
         <p>Nenhuma vaga lançada ainda.</p>
         <RouterLink class="primary" to="/lancamento">Lançar primeira vaga</RouterLink>
       </div>
@@ -317,7 +336,6 @@ function exportar() {
             <tr class="grupo">
               <th v-for="s in SECOES" :key="s.key" :colspan="COLUNAS[s.key].length" class="ini">
                 <span :title="s.titulo">{{ s.curto || s.titulo }}</span>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
               </th>
               <th class="ini" rowspan="2"><span class="sr">Ações</span></th>
             </tr>

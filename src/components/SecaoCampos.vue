@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue';
-import { vagas, opcoes, CONTRATOS, STATUS, opts, ehSubstituicao, duplicadasDe } from '../store.js';
+import CampoBusca from './CampoBusca.vue';
+import { opcoes, recrutadoras, CONTRATOS, STATUS, opts, ehSubstituicao, duplicadasDe } from '../store.js';
 import { brl, calc } from '../utils.js';
 
 // v: objeto reativo da vaga (o formulário de lançamento ou o rascunho do modal); os campos são editados direto nele
@@ -8,9 +9,7 @@ const props = defineProps({ secao: { type: String, required: true }, v: { type: 
 
 const duplicadas = computed(() => duplicadasDe(props.v));
 const substituicao = computed(() => ehSubstituicao(props.v));
-const recrutadoras = computed(() => [...new Set(vagas.value.map(x => x.recrutadora).filter(Boolean))]);
 const totais = computed(() => calc(props.v));
-
 const MOEDAS = [
   { campo: 'remuneracao', rotulo: 'Remuneração' },
   { campo: 'periculosidade', rotulo: 'Periculosidade' },
@@ -42,7 +41,7 @@ const MOEDAS = [
   <template v-else-if="secao === 'local'">
     <div class="grid">
       <label>Filial *
-        <select v-model="v.filial" required><option value="">Selecione</option><option v-for="o in opts('filiais', v.filial)" :key="o">{{ o }}</option></select>
+        <CampoBusca v-model="v.filial" :opcoes="opcoes.filiais" required placeholder="Digite para buscar" mensagem="Escolha uma filial da lista." />
       </label>
       <label>Setor
         <select v-model="v.setor"><option value="">—</option><option v-for="o in opts('setores', v.setor)" :key="o">{{ o }}</option></select>

@@ -24,7 +24,7 @@ async function enviar() {
     await entrar(u, senha.value);
     // só aceita voltar para uma página do próprio app
     const destino = String(route.query.redirect || '');
-    router.replace(destino.startsWith('/') && !destino.startsWith('//') ? destino : '/lancamento');
+    router.replace(destino.startsWith('/') && !destino.startsWith('//') ? destino : '/historico');
   } catch (e) {
     erro.value = e.message;
     senha.value = '';

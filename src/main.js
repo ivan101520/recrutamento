@@ -8,7 +8,7 @@ import './assets/styles.css';
 document.addEventListener('input', e => {
   const el = e.target;
   if (e.isComposing || !el.matches('input:not([type]), input[type="text"], input[type="search"], textarea')) return;
-  if (el.autocomplete === 'username') return; // usuário do login fica como digitado
+  if (el.autocomplete === 'username' || el.hasAttribute('data-minusculas')) return; // nome de usuário fica como digitado
   const maiusculo = el.value.toUpperCase();
   if (maiusculo === el.value) return;
   const { selectionStart: ini, selectionEnd: fim } = el;

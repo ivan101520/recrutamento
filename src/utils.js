@@ -3,6 +3,8 @@
 export const hoje = () => new Date().toLocaleDateString('sv'); // YYYY-MM-DD no fuso local
 export const n = x => Number(x) || 0;
 export const brl = x => n(x).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+// para buscas e comparações: ignora acentos e maiúsculas ("são joão" = "SAO JOAO")
+export const normalizar = s => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 export const data = s => s ? s.split('-').reverse().join('/') : '—';
 
 export function calc(v) {
@@ -37,5 +39,6 @@ console.assert(migrar({ remuneracao: 2000, periculosidade: true }).periculosidad
 console.assert(migrar({ fechada: '2026-01-10' }).status === 'fechada' && migrar({}).status === 'aberta', 'migração status');
 console.assert(migrar({ status: 'congelada' }).status === 'congelada', 'migração mantém status');
 console.assert(migrar({ situacao: 'Cancelada', fechada: '2026-01-10' }).status === 'cancelada', 'migração status pela situação');
+console.assert(normalizar('São João Ação') === 'sao joao acao' && normalizar(null) === '', 'normalizar sem acento');
 console.assert(diasAbertos({ iniciada: '2026-01-01', fechada: '2026-01-31' }) === 30, 'dias abertos');
 console.assert(foraSla({ iniciada: '2026-01-01', fechada: '2026-02-15', sla: 30 }), 'fora do SLA');

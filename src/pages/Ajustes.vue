@@ -1,12 +1,11 @@
 <script setup>
 import { reactive } from 'vue';
 import { opcoes, LISTAS, avisar } from '../store.js';
+import { normalizar } from '../utils.js';
 
 const novaOpcao = reactive({});
 const busca = reactive({});
 
-// ignora acentos e maiúsculas: "sao" encontra "SÃO PAULO"
-const normalizar = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 const filtradas = lista => {
   const q = normalizar((busca[lista] || '').trim());
   return q ? opcoes[lista].filter(o => normalizar(o).includes(q)) : opcoes[lista];

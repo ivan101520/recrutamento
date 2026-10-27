@@ -1,7 +1,7 @@
 <script setup>
 import { computed, ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { form, criarVaga, vazio, avisar, SECOES, duplicadasDe, erroDatas, paraSalvar, rotuloStatus } from '../store.js';
+import { form, criarVaga, buscarDuplicadas, vazio, avisar, SECOES, erroDatas, paraSalvar, rotuloStatus } from '../store.js';
 import { n, brl, data, calc } from '../utils.js';
 import Modal from '../components/Modal.vue';
 import SecaoCampos from '../components/SecaoCampos.vue';
@@ -13,7 +13,7 @@ const perguntarDuplicada = ref(false);
 const salvando = ref(false); // evita lançar duas vezes enquanto a planilha responde
 
 const totais = computed(() => calc(form));
-const duplicadas = computed(() => duplicadasDe(form));
+const duplicadas = ref([]); // preenchida ao salvar, com a resposta da API
 const prazoSla = computed(() => {
   if (!form.iniciada || !n(form.sla)) return '';
   const d = new Date(form.iniciada + 'T12:00');
@@ -35,21 +35,29 @@ async function salvar(confirmouDuplicada = false) {
   if (erro.value) return;
   if (!formEl.value.checkValidity()) {
     formEl.value.reportValidity();
-    erro.value = 'Preencha os campos obrigatórios: cargo, posições, filial, estado e data de início.';
+    erro.value = 'Preencha os campos obrigatórios: cargo, posições, filial (escolhida da lista), estado e data de início.';
     return;
   }
-  if (duplicadas.value.length && !confirmouDuplicada) {
-    perguntarDuplicada.value = true;
-    return;
-  }
-  const registro = { ...paraSalvar(form), id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) };
   salvando.value = true;
-  const ok = await criarVaga(registro);
-  salvando.value = false;
-  if (!ok) return;
-  avisar(`Vaga ${registro.codigo || registro.cargo} lançada.`);
-  novo();
-  router.push('/historico');
+  try {
+    // confere o código na planilha inteira: a lista da tela só tem o período do Histórico
+    if (!confirmouDuplicada) {
+      duplicadas.value = await buscarDuplicadas(form);
+      if (duplicadas.value.length) {
+        perguntarDuplicada.value = true;
+        return;
+      }
+    }
+    const registro = { ...paraSalvar(form), id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) };
+    if (!(await criarVaga(registro))) return;
+    avisar(`Vaga ${registro.codigo || registro.cargo} lançada.`);
+    novo();
+    router.push('/historico');
+  } catch (e) {
+    erro.value = `Não foi possível conferir o código Pandapé. ${e.message}`;
+  } finally {
+    salvando.value = false;
+  }
 }
 </script>
 

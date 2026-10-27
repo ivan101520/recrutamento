@@ -3,7 +3,7 @@ import { ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { toast, carregando, carregar, avisar } from './store.js';
 import { PAGINAS } from './router.js';
-import { sessao, sair } from './auth.js';
+import { sessao, sair, ehAdmin } from './auth.js';
 import { isDark, alternarTema } from './tema.js';
 
 const route = useRoute();
@@ -18,6 +18,7 @@ const ICONES = {
   '/lancamento': ['M12 5v14M5 12h14'],
   '/historico': ['M3 12a9 9 0 1 0 3-6.7L3 8', 'M3 3v5h5', 'M12 7v5l3 2'],
   '/ajustes': ['M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6'],
+  '/usuarios': ['M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2', 'M9 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8z', 'M22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8'],
 };
 
 async function recarregar() {
@@ -38,7 +39,7 @@ function alternarSidebar() {
   <div v-else class="shell" :class="{ colapsada }">
     <aside class="sidebar" aria-label="Painel de controle">
       <div class="sidebar-topo">
-        <RouterLink to="/lancamento" class="logo" aria-label="Vagas, início">
+        <RouterLink to="/historico" class="logo" aria-label="Vagas, início">
           <img src="/logo.png" alt="Grupo Modena &amp; Araújo">
         </RouterLink>
         <button
@@ -55,7 +56,7 @@ function alternarSidebar() {
 
       <nav class="nav" aria-label="Páginas">
         <p class="nav-title">Vagas</p>
-        <RouterLink v-for="p in PAGINAS" :key="p.path" :to="p.path" active-class="on" :title="colapsada ? p.titulo : undefined" :aria-label="p.titulo">
+        <RouterLink v-for="p in PAGINAS.filter(x => !x.admin || ehAdmin())" :key="p.path" :to="p.path" active-class="on" :title="colapsada ? p.titulo : undefined" :aria-label="p.titulo">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path v-for="d in ICONES[p.path]" :key="d" :d="d" />
           </svg>

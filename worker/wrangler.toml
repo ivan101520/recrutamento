@@ -4,7 +4,7 @@ compatibility_date = "2026-10-01"
 
 [vars]
 # endereços que podem chamar a API, separados por vírgula (inclua o endereço onde o app for publicado)
-ALLOWED_ORIGINS = "http://localhost:5173"
+ALLOWED_ORIGINS = "http://localhost:5173,https://recrutamento-modenaearaujo.pages.dev"
 
 # limita tentativas de login: 6 por minuto por IP (plano gratuito)
 [[ratelimits]]

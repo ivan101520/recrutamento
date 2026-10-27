@@ -13,6 +13,7 @@ function ler() {
 
 export const sessao = reactive(ler());
 export const logado = () => !!sessao.token && sessao.expira > Date.now();
+export const ehAdmin = () => sessao.usuario?.perfil === 'admin';
 
 let timer;
 function agendarFim() {

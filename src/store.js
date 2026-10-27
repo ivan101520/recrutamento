@@ -1,6 +1,6 @@
 // Estado compartilhado entre as páginas. Os dados ficam na planilha do Google, via Worker (pasta worker/).
 import { reactive, ref, watch } from 'vue';
-import { hoje, migrar } from './utils.js';
+import { hoje, migrar, normalizar } from './utils.js';
 import { sessao, logado, sair } from './auth.js';
 
 const API = import.meta.env.VITE_API_URL;
@@ -56,7 +56,20 @@ export function vazio() {
   };
 }
 
+// período do filtro do Histórico: a API só devolve as vagas desse período (mais todas as abertas, para o alerta)
+// padrão: mês atual e os 2 anteriores (dia 1 evita pular mês em datas como 31/05 - 2 meses)
+function ultimos3Meses() {
+  const agora = new Date();
+  const inicio = new Date(agora.getFullYear(), agora.getMonth() - 2, 1);
+  const chave = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  return { modo: 'mes', de: chave(inicio), ate: chave(agora) };
+}
+export const PERIODO_PADRAO = ultimos3Meses();
+export const periodo = ref({ ...PERIODO_PADRAO });
+
 export const vagas = ref([]);
+export const totalVagas = ref(0); // da planilha inteira, não só do período
+export const recrutadoras = ref([]); // sugestões do campo Recrutadora, da planilha inteira
 export const opcoes = reactive(structuredClone(OPCOES_PADRAO));
 export const carregando = ref(true);
 // o formulário fica aqui para não perder o que foi digitado ao trocar de página
@@ -69,7 +82,7 @@ export function avisar(msg) {
   avisar.t = setTimeout(() => (toast.value = ''), 3200);
 }
 
-async function api(caminho, metodo = 'GET', corpo) {
+export async function api(caminho, metodo = 'GET', corpo) {
   if (!API) throw new Error('Endereço da API não configurado (VITE_API_URL no arquivo .env.local).');
   const r = await fetch(API + caminho, {
     method: metodo,
@@ -85,14 +98,25 @@ async function api(caminho, metodo = 'GET', corpo) {
   return json;
 }
 
+const consultaDados = () => {
+  const { modo, de, ate } = periodo.value;
+  return `/dados?${new URLSearchParams({ modo, de: de || '', ate: ate || '' })}`;
+};
+
 // cada função grava na planilha primeiro e só muda a tela se deu certo; devolve false em caso de erro
+// muda a cada gravação feita por aqui: uma atualização automática que já estava a caminho é descartada,
+// senão ela traria a lista de antes da gravação e "desfaria" a mudança na tela por 30 s
+let versaoLocal = 0;
 async function tentar(acao, msgErro) {
+  versaoLocal++;
   try { await acao(); return true; }
   catch (e) { console.error(e); avisar(`${msgErro} ${e.message}`); return false; }
 }
 export const criarVaga = v => tentar(async () => {
   await api('/vagas', 'POST', v);
   vagas.value = [v, ...vagas.value];
+  totalVagas.value++;
+  if (v.recrutadora && !recrutadoras.value.includes(v.recrutadora)) recrutadoras.value = [...recrutadoras.value, v.recrutadora].sort();
 }, 'Não foi possível lançar a vaga.');
 export const atualizarVaga = v => tentar(async () => {
   await api(`/vagas/${encodeURIComponent(v.id)}`, 'PUT', v);
@@ -101,7 +125,15 @@ export const atualizarVaga = v => tentar(async () => {
 export const excluirVaga = v => tentar(async () => {
   await api(`/vagas/${encodeURIComponent(v.id)}`, 'DELETE');
   vagas.value = vagas.value.filter(x => x.id !== v.id);
+  totalVagas.value--;
 }, 'Não foi possível excluir a vaga.');
+
+// vagas com o mesmo Cód. Pandapé na planilha inteira (a lista da tela só tem o período filtrado)
+export async function buscarDuplicadas(v) {
+  if (!v.codigo) return [];
+  const { duplicadas } = await api(`/duplicadas?${new URLSearchParams({ codigo: v.codigo, id: v.id || '' })}`);
+  return duplicadas.map(d => migrar(maiusculas(d)));
+}
 
 // textos da planilha aparecem em maiúsculas, como o que é digitado no app (main.js).
 // Ficam de fora: id e status (chaves internas) e contrato (precisa bater com a lista CONTRATOS).
@@ -109,13 +141,37 @@ const SEM_MAIUSCULAS = new Set(['id', 'status', 'contrato', 'atualizadoEm']);
 const maiusculas = v => Object.fromEntries(Object.entries(v).map(([k, x]) =>
   [k, typeof x === 'string' && !SEM_MAIUSCULAS.has(k) ? x.toUpperCase() : x]));
 
+// só a resposta do pedido mais recente vale: trocar o período com outra busca a caminho não mistura as listas
+let pedido = 0;
+function aplicarVagas(dados) {
+  vagas.value = dados.vagas.map(v => migrar(maiusculas(v)));
+  totalVagas.value = dados.total ?? dados.vagas.length;
+  recrutadoras.value = dados.recrutadoras ?? [];
+}
+
+// atualização automática do Histórico e troca de período: só as vagas, sem aviso na tela
+// (se falhar, a próxima rodada tenta de novo)
+export async function atualizarVagas() {
+  if (!logado()) return;
+  const meu = ++pedido;
+  const versao = versaoLocal;
+  try {
+    const dados = await api(consultaDados());
+    if (meu === pedido && versao === versaoLocal) aplicarVagas(dados);
+  } catch (e) {
+    console.warn('Atualização do Histórico falhou; tenta de novo na próxima rodada.', e);
+  }
+}
+watch(periodo, atualizarVagas, { deep: true });
+
 // carregar só lê a planilha, nunca grava; gravações acontecem apenas por ação da pessoa (lançar, editar, excluir, Ajustes)
 let opcoesLidas = JSON.stringify(opcoes);
 export async function carregar() {
   carregando.value = true;
+  const meu = ++pedido;
   try {
-    const dados = await api('/dados');
-    vagas.value = dados.vagas.map(v => migrar(maiusculas(v)));
+    const dados = await api(consultaDados());
+    if (meu === pedido) aplicarVagas(dados);
     // aba Opcoes vazia: usa as opções padrão só na tela; "Loja" e "LOJA" viram uma opção só
     const lidas = Object.fromEntries(Object.entries(dados.opcoes).map(([k, l]) => [k, [...new Set(l.map(o => o.toUpperCase()))]]));
     Object.assign(opcoes, structuredClone(OPCOES_PADRAO), lidas);
@@ -134,6 +190,9 @@ if (logado()) carregar();
 watch(() => sessao.token, token => {
   if (token) return carregar();
   vagas.value = [];
+  totalVagas.value = 0;
+  recrutadoras.value = [];
+  periodo.value = { ...PERIODO_PADRAO };
   Object.assign(opcoes, structuredClone(OPCOES_PADRAO));
   opcoesLidas = JSON.stringify(opcoes);
   Object.assign(form, vazio());
@@ -168,7 +227,7 @@ export const SECOES = [
 ];
 
 // depende do texto da opção "Substituição" em Ajustes
-export const ehSubstituicao = v => (v.motivo || '').toLowerCase() === 'substituição';
+export const ehSubstituicao = v => normalizar(v.motivo) === 'substituicao';
 
 export const duplicadasDe = v =>
   v.codigo ? vagas.value.filter(x => x.codigo === v.codigo && x.id !== v.id) : [];

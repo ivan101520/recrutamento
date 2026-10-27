@@ -67,6 +67,15 @@ const enc = encodeURIComponent;
 const gravar = (env, faixa, values) =>
   sheets(env, `/values/${enc(faixa)}?valueInputOption=RAW`, { method: 'PUT', body: JSON.stringify({ values }) });
 
+async function excluirLinha(env, aba, linha) {
+  const { sheets: abas } = await sheets(env, '?fields=sheets.properties');
+  const sheetId = abas.find(a => a.properties.title === aba).properties.sheetId;
+  await sheets(env, ':batchUpdate', {
+    method: 'POST',
+    body: JSON.stringify({ requests: [{ deleteDimension: { range: { sheetId, dimension: 'ROWS', startIndex: linha - 1, endIndex: linha } } }] }),
+  });
+}
+
 async function linhaDaVaga(env, id) {
   const { values = [] } = await sheets(env, `/values/${enc(`${ABA_VAGAS}!A:A`)}`);
   const i = values.findIndex(([v]) => String(v) === id); // ids antigos da planilha são números
@@ -161,19 +170,95 @@ const versaoSenha = h => String(h ?? '').split('$')[3]?.slice(0, 12) ?? '';
 const estaAtivo = u => ['true', 'verdadeiro', 'sim', '1', 'x'].includes(String(u.ativo).trim().toLowerCase());
 
 // shortcut: usuários ficam 60 s em memória; desativar alguém leva até 1 minuto para valer.
-let cacheUsuarios = { lista: [], ate: 0 };
+let cacheUsuarios = { lista: [], cab: [], ate: 0 };
 async function usuarios(env, fresco = false) {
   if (!fresco && cacheUsuarios.ate > Date.now()) return cacheUsuarios.lista;
   const { values = [] } = await sheets(env, `/values/${enc(ABA_USUARIOS)}`).catch(e => {
-    if (/Unable to parse range/i.test(e.message)) throw erro(500, `Crie a aba "${ABA_USUARIOS}" na planilha, com as colunas: id, usuario, nome, perfil, ativo, senha_hash.`);
+    if (/Unable to parse range/i.test(e.message)) throw erro(500, `Crie a aba "${ABA_USUARIOS}" na planilha, com as colunas: ${COLUNAS_USUARIOS.join(', ')}.`);
     throw e;
   });
   const [cab = [], ...linhas] = values;
   const lista = linhas
-    .map(l => Object.fromEntries(cab.map((c, i) => [String(c).trim(), String(l[i] ?? '').trim()])))
+    // _linha: número da linha na planilha, usado para editar e excluir
+    .map((l, i) => ({ ...Object.fromEntries(cab.map((c, j) => [String(c).trim(), String(l[j] ?? '').trim()])), _linha: i + 2 }))
     .filter(u => u.id && u.usuario);
-  cacheUsuarios = { lista, ate: Date.now() + 60_000 };
+  cacheUsuarios = { lista, cab: cab.map(c => String(c).trim()), ate: Date.now() + 60_000 };
   return lista;
+}
+
+const COLUNAS_USUARIOS = ['id', 'usuario', 'nome', 'perfil', 'ativo', 'senha_hash', 'criado_em'];
+const PERFIS = ['admin', 'analista'];
+const semSenha = ({ senha_hash, _linha, ...u }) => ({ ...u, ativo: estaAtivo(u) });
+
+// edição parcial (só os campos enviados). Regras iguais às do Gente & Gestão para o próprio usuário.
+async function editarUsuario(req, env, id, eu) {
+  const c = await req.json().catch(() => ({}));
+  const atual = (await usuarios(env, true)).find(u => u.id === id);
+  if (!atual) throw erro(404, 'Usuário não encontrado.');
+  const proprio = id === eu.id;
+  const mud = {};
+
+  if (c.nome !== undefined) {
+    mud.nome = String(c.nome).trim().slice(0, 120);
+    if (!mud.nome) throw erro(400, 'Informe o nome.');
+  }
+  if (c.perfil !== undefined) {
+    if (!PERFIS.includes(c.perfil)) throw erro(400, 'Perfil inválido.');
+    mud.perfil = c.perfil;
+  }
+  if (c.ativo !== undefined) mud.ativo = c.ativo === true || c.ativo === 'true';
+  if (proprio && ((mud.perfil && mud.perfil !== 'admin') || mud.ativo === false)) {
+    throw erro(400, 'Você não pode alterar o próprio perfil nem se desativar.');
+  }
+  if (c.senha) {
+    if (proprio) throw erro(400, 'Você não pode trocar a própria senha por aqui.');
+    const senha = String(c.senha);
+    if (senha.length < 6 || senha.length > 200) throw erro(400, 'A senha deve ter no mínimo 6 caracteres.');
+    mud.senha_hash = await hashSenha(senha); // muda a versão da senha: as sessões abertas dele caem
+  }
+  if (!Object.keys(mud).length) return { user: semSenha(atual) };
+
+  const novo = { ...atual, ...mud };
+  novo.ativo = estaAtivo(novo); // grava como verdadeiro/falso, não como texto
+  await gravar(env, `${ABA_USUARIOS}!${atual._linha}:${atual._linha}`, [cacheUsuarios.cab.map(k => novo[k] ?? '')]);
+  cacheUsuarios.ate = 0;
+  return { user: semSenha(novo) };
+}
+
+async function excluirUsuario(env, id, eu) {
+  if (id === eu.id) throw erro(400, 'Você não pode excluir o próprio usuário.');
+  const atual = (await usuarios(env, true)).find(u => u.id === id);
+  if (!atual) throw erro(404, 'Usuário não encontrado.');
+  await excluirLinha(env, ABA_USUARIOS, atual._linha);
+  cacheUsuarios.ate = 0;
+  return { ok: true };
+}
+
+async function cadastrarUsuario(req, env) {
+  const c = await req.json().catch(() => ({}));
+  const usuario = String(c.usuario ?? '').trim().toLowerCase();
+  const nome = String(c.nome ?? '').trim().slice(0, 120);
+  const perfil = String(c.perfil ?? '');
+  const senha = String(c.senha ?? '');
+  if (!/^[a-z0-9._-]{3,40}$/.test(usuario)) throw erro(400, 'O usuário deve ter de 3 a 40 caracteres: letras sem acento, números, ponto, hífen ou sublinhado.');
+  if (!nome) throw erro(400, 'Informe o nome.');
+  if (!PERFIS.includes(perfil)) throw erro(400, 'Perfil inválido.');
+  if (senha.length < 6 || senha.length > 200) throw erro(400, 'A senha deve ter no mínimo 6 caracteres.');
+
+  const lista = await usuarios(env, true);
+  if (lista.some(u => u.usuario.toLowerCase() === usuario)) throw erro(409, `O usuário "${usuario}" já existe.`);
+
+  let cab = cacheUsuarios.cab;
+  if (!cab.length) { // aba criada sem cabeçalho
+    cab = COLUNAS_USUARIOS;
+    await gravar(env, `${ABA_USUARIOS}!1:1`, [cab]);
+  }
+  const novo = { id: crypto.randomUUID(), usuario, nome, perfil, ativo: true, senha_hash: await hashSenha(senha), criado_em: new Date().toISOString() };
+  // segue a ordem das colunas da própria aba, seja qual for
+  await sheets(env, `/values/${enc(ABA_USUARIOS)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
+    { method: 'POST', body: JSON.stringify({ values: [cab.map(k => novo[k] ?? '')] }) });
+  cacheUsuarios.ate = 0;
+  return { user: semSenha(novo) };
 }
 
 const chavesHmac = new Map();
@@ -230,27 +315,81 @@ async function autenticar(req, env) {
   return u;
 }
 
+/* ---------- filtro de período (mesma regra do Histórico: compara pela data de início) ---------- */
+const FORMATO_PERIODO = { mes: /^\d{4}-\d{2}$/, data: /^\d{4}-\d{2}-\d{2}$/ };
+export function filtroPeriodo(modo, de, ate) {
+  const formato = FORMATO_PERIODO[modo];
+  if (!formato) return () => true; // sem período: todas
+  de = formato.test(de || '') ? de : '';
+  ate = formato.test(ate || '') ? ate : '';
+  return v => {
+    const ini = String(v.iniciada ?? '');
+    const d = modo === 'mes' ? ini.slice(0, 7) : ini;
+    return (!de || d >= de) && (!ate || d <= ate);
+  };
+}
+
+// mesma regra de status do app (utils.js, migrar): sem status, a Situação ou a data de fechamento decidem
+export function estaAberta(v) {
+  const status = String(v.status || '').trim().toLowerCase();
+  if (status) return status === 'aberta';
+  const sit = String(v.situacao || '').trim().toLowerCase();
+  return sit !== 'cancelada' && sit !== 'congelada' && !v.fechada;
+}
+
 /* ---------- rotas ---------- */
 async function rotear(req, env) {
   const url = new URL(req.url);
   const [, recurso, id] = url.pathname.split('/');
 
-  if (req.method === 'GET' && !recurso) return { ok: true, api: 'vagas', rotas: ['POST /login', 'GET /dados', 'POST /vagas', 'PUT /vagas/:id', 'DELETE /vagas/:id', 'PUT /opcoes'] };
+  if (req.method === 'GET' && !recurso) return { ok: true, api: 'vagas', rotas: ['POST /login', 'GET /usuarios', 'POST /usuarios', 'PATCH /usuarios/:id', 'DELETE /usuarios/:id', 'GET /dados?modo=&de=&ate=', 'GET /duplicadas?codigo=&id=', 'POST /vagas', 'PUT /vagas/:id', 'DELETE /vagas/:id', 'PUT /opcoes'] };
   if (!env.JWT_SECRET) throw erro(500, 'Servidor não configurado (JWT_SECRET).');
   if (req.method === 'POST' && recurso === 'login') return entrar(req, env);
-  await autenticar(req, env);
+  const eu = await autenticar(req, env);
 
+  if (recurso === 'usuarios') {
+    // perfil lido da planilha a cada pedido: rebaixar alguém vale sem precisar sair e entrar
+    if (eu.perfil !== 'admin') throw erro(403, 'Apenas administradores podem gerenciar usuários.');
+    if (req.method === 'GET' && !id) return { usuarios: (await usuarios(env, true)).map(semSenha) };
+    if (req.method === 'POST' && !id) return cadastrarUsuario(req, env);
+    if (req.method === 'PATCH' && id) return editarUsuario(req, env, decodeURIComponent(id), eu);
+    if (req.method === 'DELETE' && id) return excluirUsuario(env, decodeURIComponent(id), eu);
+  }
+
+  // ?modo=mes|data&de=&ate=: devolve só as vagas desse período (pela data de início), como o filtro do Histórico.
+  // O Google não filtra por data: a aba inteira é lida do mesmo jeito; o que diminui é a resposta para o navegador.
   if (req.method === 'GET' && recurso === 'dados') {
     const { valueRanges } = await sheets(env,
       `/values:batchGet?ranges=${enc(ABA_VAGAS)}&ranges=${enc(ABA_OPCOES)}&valueRenderOption=UNFORMATTED_VALUE&majorDimension=ROWS`);
     const [cabecalho = [], ...linhas] = valueRanges[0].values || [];
-    const vagas = linhas.filter(l => l[0]).map(l => paraVaga(cabecalho, l));
+    const todas = linhas.filter(l => l[0]).map(l => paraVaga(cabecalho, l));
     const [cabOpcoes = [], ...linhasOpcoes] = valueRanges[1].values || [];
     const opcoes = {};
     cabOpcoes.forEach((lista, i) => {
       if (LISTAS.includes(lista)) opcoes[lista] = linhasOpcoes.map(l => l[i]).filter(x => x !== undefined && x !== '').map(String);
     });
-    return { vagas: vagas.reverse(), opcoes }; // mais recentes primeiro, como no app
+    const p = url.searchParams;
+    const noPeriodo = filtroPeriodo(p.get('modo'), p.get('de'), p.get('ate'));
+    return {
+      // abertas vão sempre: o alerta "Abertas de meses anteriores" olha todas, não só as do período
+      vagas: todas.filter(v => noPeriodo(v) || estaAberta(v)).reverse(), // mais recentes primeiro, como no app
+      opcoes,
+      total: todas.length,
+      recrutadoras: [...new Set(todas.map(v => String(v.recrutadora ?? '').trim().toUpperCase()).filter(Boolean))].sort(),
+    };
+  }
+
+  // ?codigo=&id=: vagas com o mesmo Cód. Pandapé (menos a própria), para o aviso de duplicada ao salvar
+  if (req.method === 'GET' && recurso === 'duplicadas') {
+    const codigo = String(url.searchParams.get('codigo') || '').trim().toUpperCase();
+    const proprio = String(url.searchParams.get('id') || '');
+    if (!codigo) return { duplicadas: [] };
+    const { values = [] } = await sheets(env, `/values/${enc(ABA_VAGAS)}?valueRenderOption=UNFORMATTED_VALUE`);
+    const [cabecalho = [], ...linhas] = values;
+    const duplicadas = linhas.filter(l => l[0]).map(l => paraVaga(cabecalho, l))
+      .filter(v => String(v.codigo ?? '').trim().toUpperCase() === codigo && v.id !== proprio)
+      .map(({ id, codigo, cargo, filial, estado, iniciada, fechada, status, situacao }) => ({ id, codigo, cargo, filial, estado, iniciada, fechada, status, situacao }));
+    return { duplicadas };
   }
 
   // aceita uma vaga ou uma lista (usado para enviar as vagas antigas do navegador de uma vez)
@@ -272,13 +411,7 @@ async function rotear(req, env) {
   }
 
   if (req.method === 'DELETE' && recurso === 'vagas' && id) {
-    const linha = await linhaDaVaga(env, id);
-    const { sheets: abas } = await sheets(env, '?fields=sheets.properties');
-    const sheetId = abas.find(a => a.properties.title === ABA_VAGAS).properties.sheetId;
-    await sheets(env, ':batchUpdate', {
-      method: 'POST',
-      body: JSON.stringify({ requests: [{ deleteDimension: { range: { sheetId, dimension: 'ROWS', startIndex: linha - 1, endIndex: linha } } }] }),
-    });
+    await excluirLinha(env, ABA_VAGAS, await linhaDaVaga(env, id));
     return { ok: true };
   }
 
@@ -302,7 +435,7 @@ export default {
     const permitidas = (env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim());
     const cors = permitidas.includes(origem) ? {
       'Access-Control-Allow-Origin': origem,
-      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+      'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, Authorization',
       Vary: 'Origin',
     } : {};
