@@ -71,7 +71,7 @@ export const vagas = ref([]);
 export const totalVagas = ref(0); // da planilha inteira, não só do período
 export const recrutadoras = ref([]); // sugestões do campo Recrutadora, da planilha inteira
 export const opcoes = reactive(structuredClone(OPCOES_PADRAO));
-export const carregando = ref(true);
+export const carregando = ref(false); // carregar() liga ao abrir já logado; sem login, nada carrega
 // o formulário fica aqui para não perder o que foi digitado ao trocar de página
 export const form = reactive(vazio());
 export const toast = ref('');
